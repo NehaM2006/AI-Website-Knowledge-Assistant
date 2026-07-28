@@ -253,7 +253,7 @@ st.title("🤖 WebGPT AI")
 
 st.markdown(
     """
-Ask questions from any website using **RAG + FAISS + Ollama**.
+Ask questions from any website using **RAG + FAISS + Groq**.
 """
 )
 
@@ -274,7 +274,7 @@ with col1:
 with col2:
     st.metric(
         "AI Model",
-        "Mistral"
+        "Llama 3.3 70B"
     )
 
 with col3:
@@ -313,7 +313,7 @@ built using Retrieval-Augmented Generation.
 
 ✅ Streamlit
 
-✅ Ollama
+✅ Groq
 
 ✅ LangChain
 
@@ -545,7 +545,7 @@ st.markdown(
 
 AI-Powered Website Question Answering System
 
-**Python • Streamlit • LangChain • Ollama • FAISS • HuggingFace**
+**Python • Streamlit • LangChain • Groq • FAISS • HuggingFace**
 
 Developed by **Neha Malhotra**
 
