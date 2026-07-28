@@ -64,19 +64,27 @@ if "last_url" not in st.session_state:
 # --------------------------------------------------
 # LOAD MODEL
 # --------------------------------------------------
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0
-)
+@st.cache_resource
+def load_llm():
+    return ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0
+    )
+
+llm = load_llm()
 
 # --------------------------------------------------
 # EMBEDDINGS
 # --------------------------------------------------
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+@st.cache_resource
+def load_embeddings():
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+embeddings = load_embeddings()
 
 # --------------------------------------------------
 # VECTOR DATABASE
