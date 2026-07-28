@@ -4,7 +4,11 @@ import streamlit as st
 import faiss
 import numpy as np
 
-from langchain_ollama import OllamaLLM
+from langchain_groq import ChatGroq
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 
@@ -60,9 +64,10 @@ if "last_url" not in st.session_state:
 # --------------------------------------------------
 # LOAD MODEL
 # --------------------------------------------------
-
-llm = OllamaLLM(
-    model="mistral"
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0
 )
 
 # --------------------------------------------------
