@@ -1,6 +1,6 @@
 # 🤖 WebGPT AI
 
-An AI-powered Website Knowledge Assistant that scrapes website content, stores it in a FAISS Vector Database, and answers user questions using Retrieval-Augmented Generation (RAG) with Ollama.
+An AI-powered Website Knowledge Assistant that scrapes website content, stores it in a FAISS Vector Database, and answers user questions using Retrieval-Augmented Generation (RAG) with Groq.
 
 ---
 
@@ -9,7 +9,7 @@ An AI-powered Website Knowledge Assistant that scrapes website content, stores i
 - 🌐 Website Scraping
 - 🧠 FAISS Vector Database
 - 🤖 AI Question Answering
-- ⚡ Local LLM using Ollama
+- ⚡ Fast LLM Inference using Groq
 - 📚 HuggingFace Embeddings
 - 💬 Chat Interface
 - 📊 Interactive Dashboard
@@ -21,7 +21,7 @@ An AI-powered Website Knowledge Assistant that scrapes website content, stores i
 
 - Python
 - Streamlit
-- Ollama (Mistral)
+- Groq (Llama 3.3 70B)
 - LangChain
 - FAISS
 - HuggingFace Embeddings
@@ -33,11 +33,11 @@ An AI-powered Website Knowledge Assistant that scrapes website content, stores i
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/WebGPT-AI.git
+git clone https://github.com/neham2006/ai-website-knowledge-assistant.git
 ```
 
 ```bash
-cd WebGPT-AI
+cd ai-website-knowledge-assistant
 ```
 
 ```bash
@@ -54,10 +54,7 @@ streamlit run app.py
 
 ## Screenshots
 
-### Home
-
-![alt text](image-1.png)
-### Chat
+![alt text](image.png)
 ![alt text](image-2.png)
 ![alt text](image-1.png)
 ![alt text](image-3.png)
