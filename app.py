@@ -1,20 +1,20 @@
-import requests
-from bs4 import BeautifulSoup
-import streamlit as st
-import faiss
-import numpy as np
-
-from langchain_groq import ChatGroq
 import os
+import requests
+import streamlit as st
+
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-load_dotenv()
+from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_text_splitters import CharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
 
-# --------------------------------------------------
+load_dotenv()
+
+# ==========================================================
 # PAGE CONFIG
-# --------------------------------------------------
+# ==========================================================
 
 st.set_page_config(
     page_title="WebGPT AI",
@@ -23,9 +23,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --------------------------------------------------
+# ==========================================================
 # CUSTOM CSS
-# --------------------------------------------------
+# ==========================================================
 
 st.markdown("""
 <style>
@@ -45,12 +45,16 @@ st.markdown("""
     border-radius:10px;
 }
 
+.stChatMessage{
+    border-radius:12px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-# --------------------------------------------------
+# ==========================================================
 # SESSION STATE
-# --------------------------------------------------
+# ==========================================================
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -61,11 +65,21 @@ if "documents" not in st.session_state:
 if "last_url" not in st.session_state:
     st.session_state.last_url = ""
 
-# --------------------------------------------------
-# LOAD MODEL
-# --------------------------------------------------
+# Stores LangChain FAISS database
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = None
+
+# Stores chunks for displaying later
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
+
+# ==========================================================
+# LOAD GROQ MODEL
+# ==========================================================
+
 @st.cache_resource
 def load_llm():
+
     return ChatGroq(
         model="llama-3.3-70b-versatile",
         api_key=os.getenv("GROQ_API_KEY"),
@@ -74,29 +88,18 @@ def load_llm():
 
 llm = load_llm()
 
-# --------------------------------------------------
-# EMBEDDINGS
-# --------------------------------------------------
+# ==========================================================
+# LOAD EMBEDDING MODEL
+# ==========================================================
 
 @st.cache_resource
 def load_embeddings():
+
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
 embeddings = load_embeddings()
-
-# --------------------------------------------------
-# VECTOR DATABASE
-# --------------------------------------------------
-
-embedding_dimension = 384
-
-if "faiss_index" not in st.session_state:
-    st.session_state.faiss_index = faiss.IndexFlatL2(embedding_dimension)
-
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = {}
 
 
 # --------------------------------------------------
@@ -104,19 +107,18 @@ if "vector_store" not in st.session_state:
 # --------------------------------------------------
 
 def scrape_website(url):
-    """
-    Scrapes paragraph text from a website.
-    """
 
     try:
+
         headers = {
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
 
         response = requests.get(
             url,
             headers=headers,
-            timeout=15
+            timeout=20
         )
 
         response.raise_for_status()
@@ -128,33 +130,45 @@ def scrape_website(url):
 
         paragraphs = soup.find_all("p")
 
-        text = " ".join(
-            p.get_text(strip=True)
+        text = "\n".join(
+            p.get_text(" ", strip=True)
             for p in paragraphs
         )
 
-        if not text:
+        if len(text.strip()) == 0:
             return None
 
-        return text[:10000]
+        # Remove extra spaces
+        text = " ".join(text.split())
+
+        return text
 
     except Exception as e:
-        st.error(f"Error: {e}")
+
+        st.error(f"Error : {e}")
+
         return None
 
+# ==========================================================
+# CREATE VECTOR DATABASE
+# ==========================================================
 
-# --------------------------------------------------
-# STORE DATA IN VECTOR DATABASE
-# --------------------------------------------------
+def create_vector_database(text, url):
 
-def store_in_faiss(text, url):
-
-    index = st.session_state.faiss_index
-    vector_store = st.session_state.vector_store
-
-    splitter = CharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+        separators=[
+            "\n\n",
+            "\n",
+            ". ",
+            "! ",
+            "? ",
+            "; ",
+            ", ",
+            " ",
+            ""
+        ]
     )
 
     chunks = splitter.split_text(text)
@@ -162,74 +176,88 @@ def store_in_faiss(text, url):
     if len(chunks) == 0:
         return "No content found."
 
-    vectors = embeddings.embed_documents(chunks)
+    metadata = []
 
-    vectors = np.array(
-        vectors,
-        dtype=np.float32
-    )
+    for i in range(len(chunks)):
+        metadata.append({
+            "url": url,
+            "chunk": i + 1
+        })
 
-    start_index = len(vector_store)
-
-    index.add(vectors)
+    # Save chunks for displaying later
+    st.session_state.chunks = []
 
     for i, chunk in enumerate(chunks):
 
-        vector_store[start_index + i] = {
-
+        st.session_state.chunks.append({
+            "id": i + 1,
             "url": url,
-
             "content": chunk
+        })
 
-        }
+    # Create LangChain FAISS Vector Database
+    vector_db = FAISS.from_texts(
+        texts=chunks,
+        embedding=embeddings,
+        metadatas=metadata
+    )
+
+    st.session_state.vector_db = vector_db
 
     return f"✅ Successfully indexed {len(chunks)} chunks."
 
 
-# --------------------------------------------------
-# RETRIEVE ANSWER
-# --------------------------------------------------
+
+# ==========================================================
+# RAG QUESTION ANSWERING
+# ==========================================================
 
 def retrieve_and_answer(query):
 
-    index = st.session_state.faiss_index
-    vector_store = st.session_state.vector_store
+    vector_db = st.session_state.vector_db
 
-    if index.ntotal == 0:
+    if vector_db is None:
+        return None, []
 
-        return "Please index a website first."
-
-    query_vector = embeddings.embed_query(query)
-
-    query_vector = np.array(
-        query_vector,
-        dtype=np.float32
-    ).reshape(1, -1)
-
-    distances, indices = index.search(
-        query_vector,
-        k=4
+    # Use MMR Retrieval
+    retriever = vector_db.as_retriever(
+        search_type="mmr",
+        search_kwargs={
+            "k": 4,
+            "fetch_k": 20,
+            "lambda_mult": 0.7
+        }
     )
+
+    docs = retriever.invoke(query)
+
+    if len(docs) == 0:
+        return "No relevant information found.", []
 
     context = ""
 
-    for idx in indices[0]:
+    for i, doc in enumerate(docs):
 
-        if idx in vector_store:
+        context += f"""
+Chunk {i+1}
 
-            context += (
-                vector_store[idx]["content"]
-                + "\n\n"
-            )
+{doc.page_content}
 
-    if context == "":
+--------------------------------------
 
-        return "No relevant information found."
+"""
 
     prompt = f"""
-You are an AI assistant.
+You are WebGPT AI.
 
-Answer ONLY using the information below.
+Answer ONLY using the context provided below.
+
+If the answer cannot be found in the context,
+reply with:
+
+"I couldn't find this information on the indexed website."
+
+Do NOT make up information.
 
 Context:
 
@@ -242,9 +270,9 @@ Question:
 Answer:
 """
 
-    answer = llm.invoke(prompt)
+    response = llm.invoke(prompt)
 
-    return answer
+    return response.content, docs
 # ==================================================
 # HEADER
 # ==================================================
@@ -263,23 +291,29 @@ st.divider()
 # DASHBOARD
 # ==================================================
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
-        "Indexed Websites",
+        "🌐 Websites",
         st.session_state.documents
     )
 
 with col2:
     st.metric(
-        "AI Model",
-        "Llama 3.3 70B"
+        "📄 Chunks",
+        len(st.session_state.chunks)
     )
 
 with col3:
     st.metric(
-        "Vector DB",
+        "🤖 Model",
+        "Llama 3.3"
+    )
+
+with col4:
+    st.metric(
+        "🧠 Vector DB",
         "FAISS"
     )
 
@@ -297,32 +331,26 @@ with st.sidebar:
 
     st.subheader("📌 About")
 
-    st.write(
-        """
-An AI-powered Website Knowledge Assistant
-built using Retrieval-Augmented Generation.
-        """
-    )
+    st.write("""
+    WebGPT AI is a Retrieval-Augmented Generation (RAG)
+    application that indexes website content using
+    FAISS Vector Search and answers questions
+    using Groq's Llama 3.3 model.
+    """)
 
     st.markdown("---")
 
     st.subheader("🛠 Tech Stack")
 
-    st.write("""
-✅ Python
-
-✅ Streamlit
-
-✅ Groq
-
-✅ LangChain
-
-✅ FAISS
-
-✅ BeautifulSoup
-
-✅ HuggingFace
-""")
+    st.markdown("""
+    - Python
+    - Streamlit
+    - LangChain
+    - FAISS
+    - HuggingFace Embeddings
+    - Groq (Llama 3.3)
+    - BeautifulSoup
+    """)
 
     st.markdown("---")
 
@@ -377,22 +405,24 @@ with tab1:
             with st.spinner("🌍 Scraping website..."):
 
                 content = scrape_website(url)
+                st.toast("Website Scraped Successfully!")
 
             if content:
 
                 with st.spinner("🧠 Creating embeddings..."):
 
-                    message = store_in_faiss(
+                   message = create_vector_database(
                         content,
                         url
                     )
+                   st.toast("Embeddings Created!")
 
                 st.session_state.documents += 1
 
                 st.session_state.last_url = url
 
                 st.success(message)
-
+                st.balloons()
             else:
 
                 st.error(
@@ -419,9 +449,9 @@ with tab2:
 
         else:
 
-            with st.spinner("🤖 Thinking..."):
-
-                answer = retrieve_and_answer(query)
+            with st.spinner("🧠 Retrieving Relevant Knowledge..."):
+                answer, retrieved_docs = retrieve_and_answer(query)
+                st.success("Answer Generated Successfully!")
 
             st.session_state.chat_history.append(
                 (
@@ -430,10 +460,25 @@ with tab2:
                 )
             )
 
+            assistant_response = answer
+
+            if retrieved_docs:
+
+                assistant_response += "\n\n📚 Source Chunks Used:\n"
+
+                for i, doc in enumerate(retrieved_docs):
+
+                    assistant_response += (
+                        f"\nChunk {i+1}"
+                        f"\nSource: {doc.metadata['url']}"
+                        f"\n{'-'*40}\n"
+                        f"{doc.page_content[:250]}...\n"
+                    )
+
             st.session_state.chat_history.append(
                 (
                     "Assistant",
-                    answer
+                    assistant_response
                 )
             )
 # ==================================================
@@ -442,7 +487,7 @@ with tab2:
 
 st.divider()
 
-st.subheader("💬 Conversation")
+st.header("💬 AI Conversation")
 
 if len(st.session_state.chat_history) == 0:
 
@@ -460,8 +505,7 @@ else:
         else:
 
             with st.chat_message("assistant"):
-                st.write(message)
-
+                st.markdown(message)
 # ==================================================
 # CLEAR CHAT
 # ==================================================
@@ -482,23 +526,27 @@ with col1:
 # VIEW DATABASE
 # ==================================================
 
-with st.expander("📚 View Indexed Knowledge"):
+with st.expander("📚 View Indexed Knowledge", expanded=False):
 
-    if len(st.session_state.vector_store) == 0:
+    if len(st.session_state.chunks) == 0:
 
-        st.info("No website indexed yet.")
+        st.info("No website indexed.")
 
     else:
 
-        for idx, data in st.session_state.vector_store.items():
+        for chunk in st.session_state.chunks:
 
-            st.markdown(f"### Chunk {idx+1}")
+            with st.container():
 
-            st.caption(data["url"])
+                st.markdown(
+                    f"### 📄 Chunk {chunk['id']}"
+                )
 
-            st.write(data["content"][:350] + "...")
+                st.caption(chunk["url"])
 
-            st.divider()
+                st.info(chunk["content"])
+
+                st.divider()
 
 # ==================================================
 # PROJECT STATISTICS
@@ -506,31 +554,33 @@ with st.expander("📚 View Indexed Knowledge"):
 
 st.divider()
 
-st.subheader("📊 Project Statistics")
+st.header("📊 Dashboard Statistics")
 
-c1, c2, c3 = st.columns(3)
+c1,c2,c3,c4 = st.columns(4)
 
 with c1:
-
     st.metric(
-        "Chunks Stored",
-        len(st.session_state.vector_store)
+        "Chunks",
+        len(st.session_state.chunks)
     )
 
 with c2:
-
     st.metric(
-        "Questions Asked",
+        "Questions",
         len(st.session_state.chat_history)//2
     )
 
 with c3:
-
     st.metric(
-        "Embedding Model",
+        "Embedding",
         "MiniLM"
     )
 
+with c4:
+    st.metric(
+        "Retriever",
+        "MMR"
+    )
 # ==================================================
 # FOOTER
 # ==================================================
@@ -541,13 +591,13 @@ st.markdown(
 """
 <center>
 
-### 🤖 WebGPT AI
+## 🤖 WebGPT AI
 
-AI-Powered Website Question Answering System
+AI-Powered Website Knowledge Assistant
 
-**Python • Streamlit • LangChain • Groq • FAISS • HuggingFace**
+**Python • Streamlit • LangChain • FAISS • HuggingFace • Groq**
 
-Developed by **Neha Malhotra**
+Made with ❤️ by **Neha Malhotra**
 
 </center>
 """,
